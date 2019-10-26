@@ -39,23 +39,34 @@ func validate(filePath string, delimiter string) {
 	if err != nil {
 		log.Fatal("Error: ", err.Error())
 	}
-	reader := csv.NewReader(bufio.NewReader(csvFile))
-	reader.Comma = []rune(delimiter)[0]
+
 	errorsCount := 0
+
+	fileReader := bufio.NewReader(csvFile)
+	lineNumber := 0
 	for {
-		line, err := reader.Read()
+		lineNumber++
+		line, err := fileReader.ReadString('\n')
+		if len(line) == 0 && err != nil {
+			if err == io.EOF {
+				break
+			}
+			log.Fatal("Error: ", err.Error())
+		}
+		line = strings.TrimSuffix(line, "\n")
+
+		reader := csv.NewReader(strings.NewReader(line))
+		reader.Comma = []rune(delimiter)[0]
+		_, err = reader.Read()
 		if err == io.EOF {
 			break
 		} else if err != nil {
 			parseError := err.(*csv.ParseError)
-			lineContent := ""
-			if line != nil {
-				lineContent = "- Line content: " + strings.Join(line, delimiter)
-			}
-			log.Println("Start line number:", parseError.StartLine, "- Line number:", parseError.Line, "- Column number:", parseError.Column+1, "- Error message:", parseError.Err.Error(), lineContent)
+			log.Println("Line number:", lineNumber, "- Error message:", parseError.Err.Error(), "- Line content:", line)
 			errorsCount++
 		}
 	}
+
 	switch errorsCount {
 	case 0:
 		log.Println("No errors found.")
