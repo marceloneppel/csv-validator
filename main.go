@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -44,6 +45,7 @@ func validate(filePath string, delimiter string) {
 
 	fileReader := bufio.NewReader(csvFile)
 	lineNumber := 0
+	columnsCount := 0
 	for {
 		lineNumber++
 		line, err := fileReader.ReadString('\n')
@@ -57,12 +59,21 @@ func validate(filePath string, delimiter string) {
 
 		reader := csv.NewReader(strings.NewReader(line))
 		reader.Comma = []rune(delimiter)[0]
-		_, err = reader.Read()
+		parsedLine, err := reader.Read()
 		if err == io.EOF {
 			break
 		} else if err != nil {
 			parseError := err.(*csv.ParseError)
 			log.Println("Line number:", lineNumber, "- Error message:", parseError.Err.Error(), "- Line content:", line)
+			errorsCount++
+			if lineNumber == 1 {
+				log.Println("Aborting validation because of error on file's first line.")
+				break
+			}
+		} else if lineNumber == 1 {
+			columnsCount = len(parsedLine)
+		} else if len(parsedLine) != columnsCount {
+			log.Println("Line number:", lineNumber, "- Error message: line with", strconv.Itoa(len(parsedLine)), "column(s) instead of", strconv.Itoa(columnsCount), "- Line content:", line)
 			errorsCount++
 		}
 	}
