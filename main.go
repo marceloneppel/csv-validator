@@ -2,41 +2,16 @@ package main
 
 import (
 	"bufio"
-	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 )
 
-func escapeQuotes(internalString string) string {
-	var regex = regexp.MustCompile(`(?:\")`)
-	/*ocurrences := regex.FindAllString(internalString, -1)
-	if len(ocurrences)%2 == 0 {*/
-	matchesIndexes := regex.FindAllStringSubmatchIndex(internalString, -1)
-	matchIndex := -1
-	replacedString := regex.ReplaceAllStringFunc(internalString, func(match string) string {
-		matchIndex++
-		log.Println("matchIndex:", matchIndex, "match:", match, matchesIndexes)
-		matchStartIndex := matchesIndexes[matchIndex][0]
-		matchEndIndex := matchesIndexes[matchIndex][1]
-		if matchStartIndex == 0 {
-			return "\"" + match
-		}
-		if matchStartIndex > 0 && internalString[matchStartIndex-1:matchEndIndex-1] != "\"" {
-			return "\"" + match
-		}
-		return match
-	})
-	log.Println("field replaced:", replacedString)
-	return replacedString
-	//}
-	//return internalString
-}
-
+// TODO: add quote and escape characters flags.
 func main() {
 	args := os.Args
 	if len(args) < 3 {
@@ -72,56 +47,6 @@ func main() {
 	}
 }
 
-// Postgres behavior.
-func parseFields(parseError csv.ParseError, line string, delimiter string, columnsCount int) (*csv.ParseError, int) {
-	log.Println("")
-	err := &parseError
-	fields := strings.Split(line, delimiter)
-	log.Println("line:", line)
-	log.Println("fields:", fields)
-	for fieldIndex, field := range fields {
-		log.Println("field:", field)
-		if err.Err == csv.ErrQuote {
-			if len(field) > 1 && strings.HasPrefix(field, "\"") && strings.HasSuffix(field, "\"") {
-				mergeFields := false
-				for nextIndex := fieldIndex + 1; nextIndex < len(fields); nextIndex++ {
-					if !strings.HasPrefix(fields[fieldIndex+1], "\"") && strings.HasSuffix(fields[fieldIndex+1], "\"") {
-						mergeFields = true
-						break
-					}
-				}
-				if mergeFields {
-					log.Println("joinFieldIndex:", fieldIndex, "- escapedJoinField:", escapeQuotes(field[1:len(field)]))
-					fields[fieldIndex] = "\"" + escapeQuotes(field[1:len(field)])
-					//} else if len(fields) > fieldIndex+1 && len(fields[fieldIndex+1]) > 1 && !strings.HasPrefix(fields[fieldIndex+1], "\"") && strings.HasSuffix(fields[fieldIndex+1], "\"") {
-
-				} else {
-					internalString := field[1 : len(field)-1]
-					log.Println("fieldIndex:", fieldIndex, "- field:", internalString)
-					fields[fieldIndex] = "\"" + escapeQuotes(internalString) + "\""
-				}
-			} else if len(field) > 1 && strings.HasPrefix(field, "\"") && len(fields) > fieldIndex+1 && len(fields[fieldIndex+1]) > 1 && strings.HasSuffix(fields[fieldIndex+1], "\"") {
-				log.Println("joinFieldIndex:", fieldIndex, "- escapedJoinField:", escapeQuotes(field[1:len(field)-1]))
-				fields[fieldIndex] = "\"" + escapeQuotes(field[1:len(field)-1])
-			}
-		}
-	}
-	if err.Err == csv.ErrQuote {
-		newLine := strings.Join(fields, delimiter)
-		log.Println("newLine:", newLine)
-		reader := csv.NewReader(strings.NewReader(newLine))
-		reader.Comma = []rune(delimiter)[0]
-		parsedLine, secondParseError := reader.Read()
-		newColumnsCount := len(parsedLine)
-		if secondParseError != nil && secondParseError.(*csv.ParseError).Err != nil {
-			log.Println("error2:", secondParseError.(*csv.ParseError).Error())
-			return secondParseError.(*csv.ParseError), newColumnsCount
-		}
-		return &csv.ParseError{}, newColumnsCount
-	}
-	return err, columnsCount
-}
-
 func validate(filePath string, delimiter string, generateValidFile bool) {
 	csvFile, err := os.Open(filePath)
 	if err != nil {
@@ -144,37 +69,22 @@ func validate(filePath string, delimiter string, generateValidFile bool) {
 		}
 		line = strings.TrimSuffix(line, "\n")
 
-		reader := csv.NewReader(strings.NewReader(line))
-		reader.Comma = []rune(delimiter)[0]
-		parsedLine, err := reader.Read()
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			parseError := err.(*csv.ParseError)
-			parseError, currentLineColumnsCount := parseFields(*parseError, line, delimiter, len(parsedLine))
-			if parseError.Err != nil {
-				log.Println("Line number:", lineNumber, "- Error message:", parseError.Err.Error(), "- Line content:", line)
-				errorsCount++
-				if lineNumber == 1 {
-					log.Println("Aborting validation because of error on file's first line.")
-					break
-				}
+		currentLineColumnsCount, err := validateLine(line, delimiter)
+		if err != nil {
+			log.Println("Line number:", lineNumber, "- Error message:", err.Error(), "- Line content:", line)
+			errorsCount++
+			if lineNumber == 1 {
+				log.Println("Aborting validation because of error on file's first line.")
 				break
 			}
-			if currentLineColumnsCount != columnsCount {
-				log.Println("Line number:", lineNumber, "- Error message: line with", strconv.Itoa(currentLineColumnsCount), "column(s) instead of", strconv.Itoa(columnsCount), "- Line content:", line)
-				errorsCount++
+			if errorsCount > 5 {
 				break
 			}
-			//break
 		} else if lineNumber == 1 {
-			columnsCount = len(parsedLine)
-		} else if len(parsedLine) != columnsCount {
-			_, currentLineColumnsCount := parseFields(csv.ParseError{}, line, delimiter, len(parsedLine))
-			if currentLineColumnsCount != columnsCount {
-				log.Println("Line number:", lineNumber, "- Error message: line with", strconv.Itoa(currentLineColumnsCount), "column(s) instead of", strconv.Itoa(columnsCount), "- Line content:", line)
-				errorsCount++
-			}
+			columnsCount = currentLineColumnsCount
+		} else if currentLineColumnsCount != columnsCount {
+			log.Println("Line number:", lineNumber, "- Error message: line with", strconv.Itoa(currentLineColumnsCount), "column(s) instead of", strconv.Itoa(columnsCount), "- Line content:", line)
+			errorsCount++
 		}
 	}
 
@@ -189,4 +99,49 @@ func validate(filePath string, delimiter string, generateValidFile bool) {
 		log.Println(errorsCount, "errors found.")
 		break
 	}
+}
+
+func validateLine(line string, delimiter string) (int, error) {
+	columnsCount := 1
+	var err error
+	inQuote := false
+	insideQuote := false
+	for charIndex := 0; charIndex < len(line); charIndex++ { // Loop on line characters.
+		character := string(line[charIndex])
+		// TODO: add escape chars logic (https://github.com/postgres/postgres/blob/404cbc5620f4d0cec213d8804f612776dc302d55/src/backend/commands/copy.c#L3472).
+		if character == "\"" {
+			if charIndex == 0 || charIndex == len(line)-1 {
+				inQuote = !inQuote
+			} else if charIndex < len(line)-1 && string(line[charIndex+1]) == delimiter {
+				isInsideQuote := false
+				if insideQuote {
+					for nextChar := charIndex + 2; nextChar < len(line); nextChar++ {
+						if nextChar == charIndex+2 && (string(line[nextChar+1]) == "\"" || string(line[nextChar+1]) == delimiter) {
+							break
+						} else if string(line[nextChar]) == "\"" && nextChar < len(line)-2 && string(line[nextChar+1]) == delimiter {
+							isInsideQuote = true
+							break
+						}
+					}
+					//if insideQuote && charIndex < len(line)-2 && string(line[charIndex+2]) == "\"" {
+				}
+				if isInsideQuote {
+					insideQuote = !insideQuote
+				} else {
+					inQuote = !inQuote
+				}
+			} else if charIndex < len(line)-1 && string(line[charIndex-1]) == delimiter {
+				inQuote = !inQuote
+			} else {
+				insideQuote = !insideQuote
+			}
+		}
+		if character == delimiter && !inQuote {
+			columnsCount++
+		}
+	}
+	if inQuote {
+		return 0, errors.New("no final quote on column")
+	}
+	return columnsCount, err
 }
