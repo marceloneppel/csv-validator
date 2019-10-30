@@ -48,6 +48,30 @@ func main() {
 }
 
 func validate(filePath string, delimiter string, generateValidFile bool) {
+	var validFile *os.File
+	var invalidFile *os.File
+	var err error
+	var validFileWriter *bufio.Writer
+	var invalidFileWriter *bufio.Writer
+
+	if generateValidFile {
+		validFile, err = os.Create(os.Getenv("GOPATH") + "/src/github.com/marceloneppel/csv-validator/generated-files/validFile.csv")
+		if err != nil {
+			log.Fatal("Error: ", err.Error())
+		}
+		defer validFile.Close()
+
+		validFileWriter = bufio.NewWriter(validFile)
+
+		invalidFile, err = os.Create(os.Getenv("GOPATH") + "/src/github.com/marceloneppel/csv-validator/generated-files/invalidFile.csv")
+		if err != nil {
+			log.Fatal("Error: ", err.Error())
+		}
+		defer invalidFile.Close()
+
+		invalidFileWriter = bufio.NewWriter(invalidFile)
+	}
+
 	csvFile, err := os.Open(filePath)
 	if err != nil {
 		log.Fatal("Error: ", err.Error())
@@ -77,6 +101,9 @@ func validate(filePath string, delimiter string, generateValidFile bool) {
 				log.Println("Aborting validation because of error on file's first line.")
 				break
 			}
+			if generateValidFile {
+				writeToFile(invalidFileWriter, line)
+			}
 			if errorsCount > 5 {
 				break
 			}
@@ -85,7 +112,17 @@ func validate(filePath string, delimiter string, generateValidFile bool) {
 		} else if currentLineColumnsCount != columnsCount {
 			log.Println("Line number:", lineNumber, "- Error message: line with", strconv.Itoa(currentLineColumnsCount), "column(s) instead of", strconv.Itoa(columnsCount), "- Line content:", line)
 			errorsCount++
+			if generateValidFile {
+				writeToFile(invalidFileWriter, line)
+			}
+		} else if generateValidFile {
+			writeToFile(validFileWriter, line)
 		}
+	}
+
+	if generateValidFile {
+		validFileWriter.Flush()
+		invalidFileWriter.Flush()
 	}
 
 	switch errorsCount {
@@ -144,4 +181,9 @@ func validateLine(line string, delimiter string) (int, error) {
 		return 0, errors.New("no final quote on column")
 	}
 	return columnsCount, err
+}
+
+func writeToFile(writer *bufio.Writer, line string) error {
+	_, err := writer.WriteString(line + "\n")
+	return err
 }
